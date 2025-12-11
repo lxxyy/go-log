@@ -25,6 +25,7 @@ func main() {
 		log.Error("这是一条 Error 日志,%d,%s,%f", 123, "abc", 3.14)
 		log.Error("这是一条 Error 日志,%d,%s,%f", 123, "abc", 3.14)
 	}
+
 	// for {
 	// 	select {
 	// 	case <-ticker.C:
