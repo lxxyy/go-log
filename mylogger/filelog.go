@@ -2,6 +2,7 @@ package mylogger
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"time"
@@ -14,6 +15,17 @@ type FileLogger struct {
 	fileObj      *os.File
 	errorFileObj *os.File
 	maxFileSize  int64
+	logChan      chan *LogMsg
+}
+
+// LogMsg 日志消息结构体
+type LogMsg struct {
+	Level     LogLevel
+	msg       string
+	funcName  string
+	fileName  string
+	timeStamp string
+	line      int
 }
 
 func NewFileLogger(levelStr, filePath, fileName string, maxFileSize int64) *FileLogger {
@@ -26,6 +38,7 @@ func NewFileLogger(levelStr, filePath, fileName string, maxFileSize int64) *File
 		filePath:    filePath,
 		fileName:    fileName,
 		maxFileSize: maxFileSize,
+		logChan:     make(chan *LogMsg, 5000),
 	}
 	err = file.initFile()
 	if err != nil {
@@ -34,6 +47,7 @@ func NewFileLogger(levelStr, filePath, fileName string, maxFileSize int64) *File
 	return file
 }
 
+// initFile 初始化文件
 func (f *FileLogger) initFile() error {
 	fullFileName := path.Join(f.filePath, f.fileName)
 	fileObj, err := os.OpenFile(fullFileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -50,6 +64,8 @@ func (f *FileLogger) initFile() error {
 
 	f.fileObj = fileObj
 	f.errorFileObj = errorFileObj
+
+	go f.witeLogBankground() //只能开启一个写入的协程
 	return nil
 }
 
@@ -57,6 +73,8 @@ func (f *FileLogger) initFile() error {
 func (f *FileLogger) enalble(logLevel LogLevel) bool {
 	return logLevel >= f.Level
 }
+
+// chekaAndSplitFile ...
 func (f *FileLogger) chekaAndSplitFile(file *os.File) error {
 	fileInfo, err := file.Stat()
 	if err != nil {
@@ -92,7 +110,6 @@ func (f *FileLogger) checkFileSize(file *os.File) bool {
 	fileInfo, err := file.Stat()
 	if err != nil {
 		//	获取文件信息错误
-
 		return false
 	}
 	return fileInfo.Size() >= f.maxFileSize
@@ -102,7 +119,7 @@ func (f *FileLogger) splitFileLogger(file *os.File) (*os.File, error) {
 	//需要切割的步骤
 	fileInfo, err := file.Stat()
 	if err != nil {
-		fmt.Printf("get file info error \n")
+		fmt.Printf("get file info error \n", err)
 		return nil, err
 	}
 	nowStr := time.Now().Format("20060102150405")
@@ -121,33 +138,62 @@ func (f *FileLogger) splitFileLogger(file *os.File) (*os.File, error) {
 	//4，将打开的新日志文件对象 赋值给 fileObj
 	return newFile, nil
 }
+func (f *FileLogger) witeLogBankground() {
+	if f.checkFileSize(f.fileObj) {
+		newFile, err := f.splitFileLogger(f.fileObj)
+		if err != nil {
+			return
+		}
+		f.fileObj = newFile
+	}
+	for {
+
+		// logRet := <-f.logChan
+
+		select {
+		case logRet := <-f.logChan:
+			loginfo := fmt.Sprintf("[%s] [%s] [%s:%s:%d] %s\n", logRet.timeStamp, getLogString(logRet.Level), logRet.funcName, logRet.fileName, logRet.line, logRet.msg)
+			io.WriteString(f.fileObj, loginfo)
+			if logRet.Level >= ERROR {
+				if f.checkFileSize(f.errorFileObj) {
+					fileObj, err := f.splitFileLogger(f.errorFileObj)
+					if err != nil {
+						return
+					}
+					f.errorFileObj = fileObj
+				}
+				io.WriteString(f.errorFileObj, loginfo)
+			}
+		default:
+			time.Sleep(time.Millisecond * 500)
+		}
+	}
+
+}
 func (f *FileLogger) log(lv LogLevel, formar string, args ...interface{}) {
 	if f.enalble(lv) {
+
 		msg := fmt.Sprintf(formar, args...)
-		level := getLogString(lv)
+
 		now := time.Now()
 		funcName, fileName, lineNo := getInfo(3)
 		//fmt.Printf("[%s] [%s] [%s:%s:%d] %s\n", now.Format("2006-01-02 15:04:05"), level, funcName, fileName, lineNo, msg)
 		// f.chekaAndSplitFile(f.fileObj) //检查文件大小，是否创建新的文件
-		if f.checkFileSize(f.fileObj) {
-			newFile, err := f.splitFileLogger(f.fileObj)
-			if err != nil {
-				return
-			}
-			f.fileObj = newFile
+		logRet := &LogMsg{
+			Level:     lv,
+			msg:       msg,
+			funcName:  funcName,
+			fileName:  fileName,
+			timeStamp: now.Format("2006-01-02 15:04:05"),
+			line:      lineNo,
 		}
 
-		fmt.Fprintf(f.fileObj, "[%s] [%s] [%s:%s:%d] %s\n", now.Format("2006-01-02 15:04:05"), level, funcName, fileName, lineNo, msg)
-		if lv >= ERROR {
-			if f.checkFileSize(f.errorFileObj) {
-				fileObj, err := f.splitFileLogger(f.errorFileObj)
-				if err != nil {
-					return
-				}
-				f.errorFileObj = fileObj
-			}
-			fmt.Fprintf(f.errorFileObj, "[%s] [%s] [%s:%s:%d] %s\n", now.Format("2006-01-02 15:04:05"), level, funcName, fileName, lineNo, msg)
+		select {
+		case f.logChan <- logRet:
+			return
+		default: //如果logChan已满，则丢弃日志
 		}
+
 	}
 
 }
