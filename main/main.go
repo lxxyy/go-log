@@ -15,6 +15,7 @@ func main() {
 
 	for {
 		log.Debug("这是一条 Debug 日志")
+		log.Debug("这是一条 Debug 日志")
 		log.Info("这是一条 Info 日志")
 		log.Warning("这是一条 Warning 日志")
 		log.Fatal("这是一条 Fatal 日志")
