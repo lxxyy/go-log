@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/striveboy/go-log/mylogger"
+	"go-log/mylogger"
 )
 
 func main() {
